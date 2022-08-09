@@ -2,6 +2,8 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Bogers.Sofie.Api", "Bogers.Sofie.Api\Bogers.Sofie.Api.csproj", "{5004CC20-6955-4736-AA4D-B33007B9BBD6}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Playground", "Playground\Playground.csproj", "{00FDD45A-BBE9-4022-A9E4-1358B681B76A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -12,5 +14,9 @@ Global
 		{5004CC20-6955-4736-AA4D-B33007B9BBD6}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{5004CC20-6955-4736-AA4D-B33007B9BBD6}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{5004CC20-6955-4736-AA4D-B33007B9BBD6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{00FDD45A-BBE9-4022-A9E4-1358B681B76A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{00FDD45A-BBE9-4022-A9E4-1358B681B76A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{00FDD45A-BBE9-4022-A9E4-1358B681B76A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{00FDD45A-BBE9-4022-A9E4-1358B681B76A}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

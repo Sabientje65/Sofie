@@ -1,0 +1,11 @@
+﻿Reference material:
+https://www.bittorrent.org/beps/bep_0000.html
+
+General flow:
+Input torrent
+Open torrent
+Stream content sequentially to client
+PROFIT
+
+
+https://www.bittorrent.org/beps/bep_0003.html#bencoding
