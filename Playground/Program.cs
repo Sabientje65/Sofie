@@ -30,6 +30,8 @@ public class Program
 
         // var type = PeekNextType(metaBytes);
 
+        //Attempt at implementing a basic BEncoding reader as per spec described in 
+        //https://www.bittorrent.org/beps/bep_0003.html#bencoding
         var metadata = ReadDictionary(metaBytes);
 
         // while (type != BEncodingType.Unknown)
