@@ -117,38 +117,26 @@ public class Program
 
     private static int ReadInteger(Queue<byte> metaData)
     {
-        metaData.Dequeue(); //Consume
+        metaData.Dequeue(); //Consume type marker
 
         var isNegative = metaData.Peek() == 0x2D;
-        if (isNegative) metaData.Dequeue(); //Skip -
+        if (isNegative) metaData.Dequeue(); //Skip negative marker
         
-        var value = 0;
-        while (PeekNextType(metaData) != BEncodingType.End)
-        {
-            var current = metaData.Dequeue();
-            value *= 10;
-            value += current - 0x30; //x030 = UTF-8  DIGIT ZERO
-        }
+        var value = ReadInteger(metaData, 0x65);
         
-        metaData.Dequeue(); //Consume end
-        
-        return value;
+        return isNegative ? -value : value;
     }
 
-    private static int ReadLength(Queue<byte> metaData)
+    private static int ReadInteger(Queue<byte> metaData, byte terminator)
     {
-        //87
-        //8
-        //7
-        //prev * 10
-        //prev + value
         //877
         //8 * 10 = 80
-        //+ 7 - 87
+        //+ 7 = 87
         //87 * 10 = 870
+        //etc.
         
         var value = 0;
-        for (var current = metaData.Dequeue(); current != 0x3A; current = metaData.Dequeue())
+        for (var current = metaData.Dequeue(); current != terminator; current = metaData.Dequeue())
         {
             value *= 10;
             value += current - 0x30; //x030 = UTF-8  DIGIT ZERO
@@ -159,7 +147,7 @@ public class Program
     private static string ReadString(Queue<byte> metaBytes)
     {
         var sb = new StringBuilder();
-        var length = ReadLength(metaBytes);
+        var length = ReadInteger(metaBytes, 0x3A);
         while (length-- > 0)
         {
             sb.Append((char)metaBytes.Dequeue());   
