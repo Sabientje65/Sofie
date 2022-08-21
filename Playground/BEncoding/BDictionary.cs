@@ -1,6 +1,8 @@
-﻿namespace Playground.BEncoding;
+﻿using System.Collections;
 
-public class BDictionary : IBType
+namespace Playground.BEncoding;
+
+public class BDictionary : IBType, IEnumerable<KeyValuePair<string, IBType>>
 {
     private readonly IDictionary<string, IBType> _internalDictionary;
 
@@ -16,5 +18,8 @@ public class BDictionary : IBType
     public BInteger ReadInt(string key) => Read<BInteger>(key);
     public BList ReadList(string key) => Read<BList>(key);
 
+    public IEnumerator<KeyValuePair<string, IBType>> GetEnumerator() => _internalDictionary.GetEnumerator();
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    
     private T Read<T>(string key) where T : IBType => (T)_internalDictionary[key];
 }

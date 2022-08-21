@@ -1,7 +1,9 @@
-﻿using System.Text;
+﻿using System.Diagnostics;
+using System.Text;
 
 namespace Playground.BEncoding;
 
+[DebuggerDisplay("{(string)this}")]
 public class BString : IBType
 {
     private readonly byte[] _data;

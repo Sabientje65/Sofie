@@ -8,10 +8,10 @@ public class Program
     
     public static async Task Main()
     {
-        using var reader = new BEncodingDeserializer(File.OpenRead(FilePath));
+        // using var reader = new BEncodingDeserializer(File.OpenRead(FilePath));
         
         //Torrent meta is always a dictionary
-        var metaDictionary = reader.Consume() as BDictionary;
+        var metaDictionary = BEncodingSerializer.Deserialize(File.OpenRead(FilePath)) as BDictionary;
 
         var chunksStr = metaDictionary.ReadDictionary("info")
             .ReadString("pieces");

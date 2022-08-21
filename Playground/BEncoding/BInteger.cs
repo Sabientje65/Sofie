@@ -1,5 +1,8 @@
-﻿namespace Playground.BEncoding;
+﻿using System.Diagnostics;
 
+namespace Playground.BEncoding;
+
+[DebuggerDisplay("{(int)this}")]
 public class BInteger : IBType
 {
     private readonly int _value;
