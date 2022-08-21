@@ -9,17 +9,147 @@ public class Program
     
     public static async Task Main()
     {
-        //First read all bytes in our torrent metadata
-        var metaBytes = new Queue<byte>( //TODO: Convert to span
-            File.ReadAllBytes(FilePath)
-        );
+        using var reader = new BEncodingDeserializer(File.OpenRead(FilePath));
+        
+        //Torrent meta is always a dictionary
+        var metaDictionary = reader.Consume() as BDictionary;
 
-        using var reader = new BEncodingReader(File.OpenRead(FilePath));
-        var value = reader.Consume();
+        var chunksStr = metaDictionary.ReadDictionary("info")
+            .ReadString("pieces");
+
+        var chunks = new TorrentChunkInfo[chunksStr.Length / 20];
+        for (var chunkIdx = 0; chunkIdx < chunks.Length; chunkIdx++)
+        {
+            var start = chunkIdx * 20;
+            var end = start + 20;
+
+            chunks[chunkIdx] = new TorrentChunkInfo
+            {
+                Index = chunkIdx,
+                Hash = chunksStr.ReadChunk(start, end).AsString()
+            };
+        }
+        
+        var meta = new TorrentMeta
+        {
+            AnnounceURL = metaDictionary.ReadString("announce").AsString(),
+            AnnounceList = metaDictionary.ReadList("announce-list")
+                .Select(x => ((BString)((BList)x)[0]).AsString())
+                .ToList(),
+            Encoding = metaDictionary.ReadString("encoding").AsString(),
+            Info = new TorrentMetaInfo
+            {
+                Length = metaDictionary.ReadDictionary("info").ReadInt("length"),
+                Name = metaDictionary.ReadDictionary("info").ReadString("name").AsString(),
+                PieceLength = metaDictionary.ReadDictionary("info").ReadInt("piece length"),
+                Chunks = chunks
+            }
+        };
+    }
+
+    //Start with use-case single file torrent
+    public class TorrentMeta
+    {
+        public string AnnounceURL { get; set; }
+        public List<string> AnnounceList { get; set; }
+        public string Encoding { get; set; }
+    
+        public TorrentMetaInfo Info { get; set; }
     }
     
+    public class TorrentMetaInfo
+    {
+        public int Length { get; set; }
+        public string Name { get; set; } 
     
-    private class BEncodingReader : IDisposable
+        public int PieceLength { get; set; }
+        public TorrentChunkInfo[] Chunks { get; set; }
+    }
+
+    public class TorrentChunkInfo
+    {
+        public int Index { get; set; }
+        public string Hash { get; set; }
+    }
+    
+    public interface IBType
+    {
+    }
+
+    public class BString : IBType
+    {
+        private readonly byte[] _data;
+        public int Length => _data.Length;
+
+        public BString(byte[] data)
+        {
+            _data = data;
+        }
+
+        public BString(string str)
+        {
+            _data = Encoding.UTF8.GetBytes(str);
+        }
+
+        public BString ReadChunk(int start, int end) => new BString(_data[start..end]);
+
+        public string AsString() => Encoding.UTF8.GetString(_data);
+        public byte[] AsBytes() => _data;
+        
+        //Operator overloading?
+
+        public static implicit operator string(BString bStr) => bStr.AsString();
+    }
+
+    public class BInteger : IBType
+    {
+        private readonly int _value;
+
+        public BInteger(int value)
+        {
+            _value = value;
+        }
+
+        public int AsInteger() => _value;
+
+        public static implicit operator int(BInteger bInt) => bInt.AsInteger();
+    }
+
+    public class BDictionary : IBType
+    {
+        private readonly IDictionary<string, IBType> _internalDictionary;
+
+        public IBType this[string key] => _internalDictionary[key];
+
+        public BDictionary(IDictionary<string, IBType> dictionary)
+        {
+            _internalDictionary = dictionary;
+        }
+
+        public BString ReadString(string key) => Read<BString>(key);
+        public BDictionary ReadDictionary(string key) => Read<BDictionary>(key);
+        public BInteger ReadInt(string key) => Read<BInteger>(key);
+        public BList ReadList(string key) => Read<BList>(key);
+
+        private T Read<T>(string key) where T : IBType => (T)_internalDictionary[key];
+    }
+
+    public class BList : IBType, IEnumerable<IBType>
+    {
+        private readonly IList<IBType> _internalList;
+
+        public IBType this[int index] => _internalList[index];
+        
+        public BList(IList<IBType> internalList)
+        {
+            _internalList = internalList;
+        }
+
+        public IEnumerator<IBType> GetEnumerator() => _internalList.GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+    
+    private class BEncodingDeserializer : IDisposable
     {
         //Attempt at implementing a basic BEncoding reader as per spec described in 
         //https://www.bittorrent.org/beps/bep_0003.html#bencoding
@@ -29,13 +159,12 @@ public class Program
 
         private readonly Stream _stream;
         private readonly byte[] _buffer = new byte[2048];
-        
+
         private int _bufferSize;
         private int _bufferIndex;
         private byte _current;
-        
 
-        public BEncodingReader(Stream stream)
+        public BEncodingDeserializer(Stream stream)
         {
             _stream = stream;
         }
@@ -46,7 +175,7 @@ public class Program
             return ReadValue();
         }
 
-        private object ReadValue()
+        private IBType ReadValue()
         {
             return CurrentType() switch
             {
@@ -79,24 +208,24 @@ public class Program
             return _current != terminator;
         }
 
-        private string ReadString()
+        private BString ReadString()
         {
-            var sb = new StringBuilder();
-            
             //Strings are unique in their type token also dubbing as the start of their length indicator
             var length = ToInt(_current);
             while (Advance(StringLengthTerminator)) length = length * 10 + ToInt(_current);
 
-            while (length-- > 0)
+            var stringData = new byte[length];
+
+            for (var i = 0; i < stringData.Length; i++)
             {
                 Advance();
-                sb.Append((char)_current);
+                stringData[i] = _current;
             }
-            
-            return sb.ToString();
+
+            return new BString(stringData);
         }
         
-        private int ReadInteger()
+        private BInteger ReadInteger()
         {
             //Keep reading until we hit a terminator - we read from left to right, so multiply each previous value with a factor of 10 to get the proper integer representation
             //874 ->
@@ -105,22 +234,22 @@ public class Program
             //870 + 4
             var value = 0;
             while (Advance(Terminator)) value = value * 10 + ToInt(_current);
-            return value;
+            return new BInteger(value);
         }
         
-        private List<object> ReadList()
+        private BList ReadList()
         {
             //Keep reading individual items until we hit a terminator
-            var list = new List<object>();
+            var list = new List<IBType>();
             while (Advance(Terminator)) list.Add(ReadValue());
-            return list;
+            return new BList(list);
         }
         
-        private Dictionary<string, object> ReadDictionary()
+        private BDictionary ReadDictionary()
         {
             //Dictionaries consist of keyvaluepairs with keys always being string values
             //keep consuming until we hit a terminator, this marks our final item
-            var dictionary = new Dictionary<string, object>();
+            var dictionary = new Dictionary<string, IBType>();
             while (Advance(Terminator))
             {
                 var key = ReadString();
@@ -128,7 +257,7 @@ public class Program
                 var value = ReadValue();
                 dictionary[key] = value;
             }
-            return dictionary;
+            return new BDictionary(dictionary);
         }
 
         private BType CurrentType()
