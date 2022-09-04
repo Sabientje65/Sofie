@@ -8,6 +8,8 @@ public class Program
     
     public static async Task Main()
     {
+        //Boristicus is cool yo
+        
         // using var reader = new BEncodingDeserializer(File.OpenRead(FilePath));
         
         //Torrent meta is always a dictionary
