@@ -1,6 +1,7 @@
 ﻿using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Runtime.Serialization.Formatters.Binary;
 using System.Web;
 using Playground.BEncoding;
 
@@ -54,7 +55,11 @@ public class Program
             }
         };
 
-        await new TorrentClient(meta.AnnounceURL).Announce(meta);
+
+        await ConnectUdp(
+            meta.AnnounceList.Last(x => x.StartsWith("udp"))    
+        );
+        // await new TorrentClient(meta.AnnounceURL).Announce(meta);
 
 
         // transactionid 
@@ -99,8 +104,12 @@ public class Program
     //     };
     // }
 
-    private static async Task ConnectUdp(string ur)
+    private static async Task ConnectUdp(string uriStr)
     {
+        var uri = new Uri(uriStr);
+        
+        await Task.CompletedTask;
+        
         // https://www.bittorrent.org/beps/bep_0015.html
         // If a response is not received after 15 * 2 ^ n seconds, the client should retransmit the request, where n starts at 0 and is increased up to 8 (3840 seconds) after every retransmission
         
@@ -113,44 +122,102 @@ public class Program
         // send connection request
         // BitConverter.GetBytes()
         // 0x41727101980
-        var connectRequest = new byte[16];
+        var connectionRequest = new ConnectionRequest(Math.Abs(Random.Shared.Next()));
+        var connectRequestBuffer = ToBytes(connectionRequest);
 
-        var connectionId = BitConverter.GetBytes(0x41727101980);
-        var transactionId = new byte[4];
-        Random.Shared.NextBytes(transactionId);
+        
+        // var connectRequest = new byte[16];
+        //
+        // var connectionId = BitConverter.GetBytes(0x41727101980);
+        // var transactionId = new byte[4];
+        // Random.Shared.Next();
         
         // swap bytes to big endian
-        if (BitConverter.IsLittleEndian) SwapEndianness(connectionId, 0, connectionId.Length);
-        Array.Copy(connectionId, connectRequest, 8);
-        connectRequest[8] = 0; // action
-        Array.Copy(transactionId, 0, connectRequest, 12, 4);
+        SwapEndianness(connectRequestBuffer, 0, 8);
+        SwapEndianness(connectRequestBuffer, 12, 4);
+        
+        // Array.Copy(connectionId, connectRequest, 8);
+        // connectRequest[8] = 0; // action
+        // Array.Copy(transactionId, 0, connectRequest, 12, 4);
 
         // return;
-        
+
         using var sock = new Socket(SocketType.Dgram, ProtocolType.Udp);
+        
+        // using var sock = new Socket(SocketType.Dgram, ProtocolType.Udp);
         await sock.ConnectAsync(
-            "open.kickasstracker.com",    
-            443
+            uri.Host,    
+            uri.Port
         );
-
-        sock.Send(connectRequest);
-
+        
+        sock.Send(connectRequestBuffer);
+        
         
         // distinction between http/udp based trackers, even on connect level
         
-        var connectResponse = new byte[16];
-        sock.Receive(connectResponse);
+        var connectResponseBuffer = new byte[16];
+        sock.Receive(connectResponseBuffer);
+
+        // first: convert BE to LE
+        SwapEndianness(connectResponseBuffer, 0, 4);
+        SwapEndianness(connectResponseBuffer, 4, 4);
+        
+        
+        var connectionResponse = FromBytes<ConnectionResponse>(connectResponseBuffer);
+        
+        if(connectionResponse.TransactionId != connectionRequest.TransactionId) throw new Exception("Transaction ids dont match!");
     }
 
+    private static byte[] ToBytes<T>(T structure) where T : struct
+    {
+        // Easy/efficient conversion of struct <> byte[]
+        // https://www.genericgamedev.com/general/converting-between-structs-and-byte-arrays/
+        
+        var size = Marshal.SizeOf<T>();
+        var bytes = new byte[size];
+        
+        // allocate memory for our structure, obtain a pointer to the memory reserved for it
+        var structurePointer = Marshal.AllocHGlobal(size);
+        
+        
+        Marshal.StructureToPtr(
+            structure, 
+            structurePointer, 
+            true // destroy previous contained data prior to writing
+        );
+        
+        Marshal.Copy(structurePointer, bytes, 0, size);
+        Marshal.FreeHGlobal(structurePointer);
+
+        return bytes;
+    }
+
+    private static T FromBytes<T>(byte[] bytes) where T : struct
+    {
+        var size = Marshal.SizeOf<T>();
+        if (size != bytes.Length) throw new Exception("Size mismatch!");
+        
+        var structurePointer = Marshal.AllocHGlobal(size);
+        
+        Marshal.Copy(bytes, 0, structurePointer, size);
+        var structure = Marshal.PtrToStructure<T>(structurePointer);
+        
+        Marshal.FreeHGlobal(structurePointer);
+
+        return structure;
+    }
+    
     private static void SwapEndianness(byte[] source, int offset, int length)
     {
-        var halfwayPoint = offset + (length / 2);
-        for (var leftIdx = offset; leftIdx < halfwayPoint; leftIdx++)
+        var end = offset + length;
+
+        for (var idx = 0; idx < length / 2; idx++)
         {
-            var rightIdx = source.Length - leftIdx - 1;
-            
+            var leftIdx = offset + idx;
+            var rightIdx = end - idx - 1;
             var left = source[leftIdx];
             var right = source[rightIdx];
+            
             source[leftIdx] = right;
             source[rightIdx] = left;
         }
@@ -172,15 +239,33 @@ public class Program
     // }
     
     // https://stackoverflow.com/q/65877653
-    // [StructLayout(LayoutKind.Explicit, CharSet = null, Pack = 0, Size = 16)]
-    // public struct ConnectionRequest
-    // {
-    //     public ConnectionRequest() { }
-    //     
-    //     public long Protocol = 0x41727101980;
-    //     public int Action = 0;
-    //     public int TransactionId = 0;
-    // }
+    [StructLayout(LayoutKind.Explicit, Pack = 0, Size = 16)]
+    public struct ConnectionRequest
+    {
+        public ConnectionRequest(int transactionId) => TransactionId = transactionId;
+        
+        [FieldOffset(0)]
+        public readonly long ProtocolId = 0x41727101980;
+        
+        [FieldOffset(8)]
+        public readonly int Action = 0;
+        
+        [FieldOffset(12)]
+        public readonly int TransactionId = 0;
+    }
+
+    [StructLayout(LayoutKind.Explicit, Pack = 0, Size = 16)]
+    public struct ConnectionResponse
+    {
+        [FieldOffset(0)]
+        public readonly int Action;
+
+        [FieldOffset(4)]
+        public readonly int TransactionId;
+        
+        [FieldOffset(8)]
+        public readonly long ConnectionId;
+    }
 
     class TorrentClient
     {
