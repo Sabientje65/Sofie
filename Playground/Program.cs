@@ -183,7 +183,7 @@ public class Program
         Marshal.StructureToPtr(
             structure, 
             structurePointer, 
-            true // destroy previous contained data prior to writing
+            false // no previous data assumed to be present, see: https://learn.microsoft.com/en-us/dotnet/api/system.runtime.interopservices.marshal.structuretoptr?view=net-7.0
         );
         
         Marshal.Copy(structurePointer, bytes, 0, size);
