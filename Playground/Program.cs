@@ -122,7 +122,7 @@ public class Program
         // send connection request
         // BitConverter.GetBytes()
         // 0x41727101980
-        var connectionRequest = new ConnectionRequest(Math.Abs(Random.Shared.Next()));
+        var connectionRequest = new ConnectRequest(Math.Abs(Random.Shared.Next()));
         var connectRequestBuffer = ToBytes(connectionRequest);
 
         
@@ -163,7 +163,7 @@ public class Program
         SwapEndianness(connectResponseBuffer, 4, 4);
         
         
-        var connectionResponse = FromBytes<ConnectionResponse>(connectResponseBuffer);
+        var connectionResponse = FromBytes<ConnectResponse>(connectResponseBuffer);
         
         if(connectionResponse.TransactionId != connectionRequest.TransactionId) throw new Exception("Transaction ids dont match!");
     }
@@ -240,22 +240,22 @@ public class Program
     
     // https://stackoverflow.com/q/65877653
     [StructLayout(LayoutKind.Explicit, Pack = 0, Size = 16)]
-    public struct ConnectionRequest
+    public struct ConnectRequest
     {
-        public ConnectionRequest(int transactionId) => TransactionId = transactionId;
+        public ConnectRequest(int transactionId) => TransactionId = transactionId;
         
         [FieldOffset(0)]
         public readonly long ProtocolId = 0x41727101980;
         
         [FieldOffset(8)]
-        public readonly int Action = 0;
+        public readonly int Action = 0; // connect
         
         [FieldOffset(12)]
         public readonly int TransactionId = 0;
     }
 
     [StructLayout(LayoutKind.Explicit, Pack = 0, Size = 16)]
-    public struct ConnectionResponse
+    public struct ConnectResponse
     {
         [FieldOffset(0)]
         public readonly int Action;
@@ -267,6 +267,91 @@ public class Program
         public readonly long ConnectionId;
     }
 
+    [StructLayout(LayoutKind.Explicit, Pack = 0, Size = 98)]
+    public struct AnnounceRequest
+    {
+        public AnnounceRequest()
+        {
+            ConnectionId = 0;
+            TransactionId = 0;
+            InfoHash = "";
+            PeerId = "";
+            Downloaded = 0;
+            Left = 0;
+            Uploaded = 0;
+            Key = 0;
+            Port = 0;
+        }
+        
+        [FieldOffset(0)]
+        public readonly long ConnectionId;
+
+        [FieldOffset(8)]
+        public readonly  int Action = 1; // announce
+
+        [FieldOffset(12)]
+        public readonly int TransactionId;
+
+        // 20 bytes
+        [FieldOffset(16)]
+        public readonly string InfoHash;
+
+        // 20 bytes
+        [FieldOffset(36)]
+        public readonly string PeerId;
+
+        [FieldOffset(56)]
+        public readonly long Downloaded;
+
+        [FieldOffset(64)]
+        public readonly long Left;
+
+        [FieldOffset(72)]
+        public readonly long Uploaded;
+
+        [FieldOffset(80)]
+        public readonly int Event = 0; // 0: none; 1: completed; 2: started; 3: stopped
+
+        [FieldOffset(84)]
+        public readonly int IpAddress = 0;
+
+        [FieldOffset(88)]
+        public readonly int Key;
+
+        [FieldOffset(92)]
+        public readonly int NumWant = -1;
+
+        [FieldOffset(96)]
+        public readonly short Port;
+    }
+    
+    [StructLayout(LayoutKind.Explicit, Pack = 0)]
+    public struct AnnounceResponse
+    {
+        [FieldOffset(0)]
+        public readonly int Action;
+        
+        [FieldOffset(4)]
+        public readonly int TransactionId;
+        
+        [FieldOffset(8)]
+        public readonly int Interval;
+        
+        [FieldOffset(12)]
+        public readonly int Leechers;
+        
+        // offset of 6
+        [FieldOffset(16)]
+        public readonly int[] Seeders; // peers
+        
+        [FieldOffset(20)]
+        public readonly int IpAddress; 
+        
+        [FieldOffset(24)]
+        public readonly int TcpPort;
+
+    }
+    
     class TorrentClient
     {
         private TcpClient _tcp;
