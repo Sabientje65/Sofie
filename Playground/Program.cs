@@ -172,6 +172,7 @@ public class Program
     {
         // Easy/efficient conversion of struct <> byte[]
         // https://www.genericgamedev.com/general/converting-between-structs-and-byte-arrays/
+        // Worth checking out: https://benbowen.blog/post/fun_with_makeref/
         
         var size = Marshal.SizeOf<T>();
         var bytes = new byte[size];
