@@ -1,7 +1,7 @@
-﻿using System.Net;
+﻿using System.Diagnostics;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
-using System.Runtime.Serialization.Formatters.Binary;
+using System.Text;
 using System.Web;
 using Playground.BEncoding;
 
@@ -19,7 +19,21 @@ public class Program
         // https://allenkim67.github.io/programming/2016/05/04/how-to-make-your-own-bittorrent-client.html
         
         // using var reader = new BEncodingDeserializer(File.OpenRead(FilePath));
+        var n = typeof(FixedSizeNonTerminatedStringMarshaller).FullName;
+
+        var v2 = new PackagedString(Id);
+        var packedBytes = ToBytes(v2);
+        var unpackedBytes = FromBytes<PackagedString>(packedBytes);
         
+        // var announceRequest = new AnnounceRequest(
+        //     1, 
+        //     1,
+        //     "abc",
+        //     Id,
+        //     Random.Shared.Next(),
+        //     6881 // https://www.speedguide.net/port.php?port=6881 bittorrent
+        // );
+        //
         //Torrent meta is always a dictionary
         var metaDictionary = BEncodingSerializer.Deserialize(File.OpenRead(FilePath)) as BDictionary;
 
@@ -57,7 +71,8 @@ public class Program
 
 
         await ConnectUdp(
-            meta.AnnounceList.Last(x => x.StartsWith("udp"))    
+            meta.AnnounceList.Last(x => x.StartsWith("udp")),
+            meta
         );
         // await new TorrentClient(meta.AnnounceURL).Announce(meta);
 
@@ -104,7 +119,7 @@ public class Program
     //     };
     // }
 
-    private static async Task ConnectUdp(string uriStr)
+    private static async Task ConnectUdp(string uriStr, TorrentMeta meta)
     {
         var uri = new Uri(uriStr);
         
@@ -166,6 +181,35 @@ public class Program
         var connectionResponse = FromBytes<ConnectResponse>(connectResponseBuffer);
         
         if(connectionResponse.TransactionId != connectionRequest.TransactionId) throw new Exception("Transaction ids dont match!");
+
+        var announceRequest = new AnnounceRequest(
+            connectionResponse.ConnectionId, 
+            connectionResponse.TransactionId,
+            meta.Info.Chunks[0].Hash,
+            Id,
+            Random.Shared.Next(),
+            6881 // https://www.speedguide.net/port.php?port=6881 bittorrent
+        );
+
+        var announceRequestBuffer = ToBytes(announceRequest);
+        
+        // swap to BE
+        SwapEndianness(announceRequestBuffer, 0, 8); 
+        SwapEndianness(announceRequestBuffer, 8, 4);
+        SwapEndianness(announceRequestBuffer, 12, 4);
+        SwapEndianness(announceRequestBuffer, 56, 8);
+        SwapEndianness(announceRequestBuffer, 64, 8);
+        SwapEndianness(announceRequestBuffer, 72, 8);
+        SwapEndianness(announceRequestBuffer, 80, 4);
+        SwapEndianness(announceRequestBuffer, 84, 4);
+        SwapEndianness(announceRequestBuffer, 88, 4);
+        SwapEndianness(announceRequestBuffer, 92, 4);
+        SwapEndianness(announceRequestBuffer, 96, 2);
+        
+        sock.Send(announceRequestBuffer);
+
+        var bufferSize = sock.ReceiveBufferSize;
+        // var announceResponseBuffer = sock.Receive();
     }
 
     private static byte[] ToBytes<T>(T structure) where T : struct
@@ -267,21 +311,108 @@ public class Program
         [FieldOffset(8)]
         public readonly long ConnectionId;
     }
+    
+    [DebuggerDisplay("{GetValue()}")]
+    [StructLayout(LayoutKind.Explicit, Pack = 0, Size = 20)]
+    public struct PackagedString
+    {
+        [MarshalAs(
+            UnmanagedType.CustomMarshaler, 
+            MarshalType = "Playground.Program+FixedSizeNonTerminatedStringMarshaller", 
+            MarshalCookie = "20", 
+            SizeConst = 20, 
+            MarshalTypeRef = typeof(FixedSizeNonTerminatedStringMarshaller))
+        ]
+        [FieldOffset(0)]
+        private char[] _value;
+
+        public string GetValue() => new string(_value);
+        
+        public PackagedString(string value)
+        {
+            _value = value.ToCharArray();
+        }
+    }
+    
+    public class FixedSizeNonTerminatedStringMarshaller : ICustomMarshaler
+    {
+        private int _size;
+
+        public FixedSizeNonTerminatedStringMarshaller()
+        {
+            
+        }
+        
+        public FixedSizeNonTerminatedStringMarshaller(int size)
+        {
+            
+        }
+        
+        // Method expected by CLR
+        public static ICustomMarshaler GetInstance(string pstrCookie) => new FixedSizeNonTerminatedStringMarshaller(20);
+        
+        public void CleanUpManagedData(object ManagedObj)
+        {
+            return;
+        }
+
+        public void CleanUpNativeData(IntPtr pNativeData)
+        {
+            Marshal.FreeHGlobal(pNativeData);
+        }
+
+        public int GetNativeDataSize() => 20;
+
+        public IntPtr MarshalManagedToNative(object ManagedObj)
+        {
+            // allocate memory for our structure, obtain a pointer to the memory reserved for it
+            // var structurePointer = Marshal.AllocHGlobal(_size);
+
+            var ptr = Marshal.AllocHGlobal(_size);
+            Marshal.Copy(Encoding.ASCII.GetBytes((string)ManagedObj), 0, ptr, _size);
+            return ptr;
+
+            // Marshal.StructureToPtr(
+            //     structure, 
+            //     structurePointer, 
+            //     false // no previous data assumed to be present, see: https://learn.microsoft.com/en-us/dotnet/api/system.runtime.interopservices.marshal.structuretoptr?view=net-7.0
+            // );
+
+            // Marshal.Copy(structurePointer, bytes, 0, size);
+            // Marshal.FreeHGlobal(structurePointer);
+
+            // return bytes;
+        }
+
+        public object MarshalNativeToManaged(IntPtr pNativeData)
+        {
+            var buffer = new byte[_size];
+            Marshal.Copy(pNativeData, buffer, 0, _size);
+            return Encoding.ASCII.GetString(buffer);
+        }
+    }
 
     [StructLayout(LayoutKind.Explicit, Pack = 0, Size = 98)]
     public struct AnnounceRequest
     {
-        public AnnounceRequest()
+        public AnnounceRequest(
+            long connectionId, 
+            int transactionId, 
+            string infoHash, 
+            string peerId,
+            int key,
+            short port
+        )
         {
-            ConnectionId = 0;
-            TransactionId = 0;
-            InfoHash = "";
-            PeerId = "";
+            ConnectionId = connectionId;
+            TransactionId = transactionId;
+            InfoHash = infoHash;
+            PeerId = peerId;
             Downloaded = 0;
             Left = 0;
             Uploaded = 0;
-            Key = 0;
-            Port = 0;
+            Key = key;
+            Port = port;
         }
         
         [FieldOffset(0)]
@@ -295,6 +426,7 @@ public class Program
 
         // 20 bytes
         [FieldOffset(16)]
+        // [MarshalAs()]
         public readonly string InfoHash;
 
         // 20 bytes
