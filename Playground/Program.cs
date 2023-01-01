@@ -1,6 +1,8 @@
-﻿using System.Diagnostics;
+﻿using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Web;
 using Playground.BEncoding;
@@ -11,7 +13,16 @@ public class Program
 {
     private const string FilePath = @"D:\Users\danny\Downloads\[HorribleSubs] Toaru Kagaku no Railgun T - 01 [1080p].mkv.torrent";
 
-    private const string Id = "qB-awfiaur27v367ab21";
+    private static readonly string Id;
+    
+    static Program()
+    {
+        //"qB-" + Encoding.ASCII.GetBytes()
+        Id = "qB-";
+        var bytes = new byte[17];
+        Random.Shared.NextBytes(bytes);
+        Id += Encoding.ASCII.GetString(bytes);
+    }
 
     public static async Task Main()
     {
@@ -70,7 +81,8 @@ public class Program
 
         await ConnectUdp(
             meta.AnnounceList.Last(x => x.StartsWith("udp")),
-            meta
+            meta,
+            metaDictionary.ReadDictionary("info")
         );
         // await new TorrentClient(meta.AnnounceURL).Announce(meta);
 
@@ -117,11 +129,16 @@ public class Program
     //     };
     // }
 
-    private static async Task ConnectUdp(string uriStr, TorrentMeta meta)
+    private static async Task ConnectUdp(string uriStr, TorrentMeta meta, IBType info)
     {
         var uri = new Uri(uriStr);
         
         await Task.CompletedTask;
+
+        using var sha1 = HashAlgorithm.Create("SHA1");
+        var infoHash = sha1.ComputeHash(
+            Encoding.UTF8.GetBytes(BEncodingSerializer.Serialize(info))    
+        );
         
         // https://www.bittorrent.org/beps/bep_0015.html
         // If a response is not received after 15 * 2 ^ n seconds, the client should retransmit the request, where n starts at 0 and is increased up to 8 (3840 seconds) after every retransmission
@@ -136,24 +153,12 @@ public class Program
         // BitConverter.GetBytes()
         // 0x41727101980
         var connectionRequest = new ConnectRequest(Math.Abs(Random.Shared.Next()));
-        var connectRequestBuffer = ToBytes(connectionRequest);
-
         
-        // var connectRequest = new byte[16];
-        //
-        // var connectionId = BitConverter.GetBytes(0x41727101980);
-        // var transactionId = new byte[4];
-        // Random.Shared.Next();
-        
-        // swap bytes to big endian
-        SwapEndianness(connectRequestBuffer, 0, 8);
-        SwapEndianness(connectRequestBuffer, 12, 4);
-        
-        // Array.Copy(connectionId, connectRequest, 8);
-        // connectRequest[8] = 0; // action
-        // Array.Copy(transactionId, 0, connectRequest, 12, 4);
-
-        // return;
+        var connectionBuffer = new MessageBuilder(16)
+            .Write(connectionRequest.ProtocolId)
+            .Write(connectionRequest.Action)
+            .Write(connectionRequest.TransactionId)
+            .AsBuffer();
 
         using var sock = new Socket(SocketType.Dgram, ProtocolType.Udp);
         
@@ -163,51 +168,198 @@ public class Program
             uri.Port
         );
         
-        sock.Send(connectRequestBuffer);
+        sock.Send(connectionBuffer);
         
         
         // distinction between http/udp based trackers, even on connect level
-        
         var connectResponseBuffer = new byte[16];
         sock.Receive(connectResponseBuffer);
 
-        // first: convert BE to LE
-        SwapEndianness(connectResponseBuffer, 0, 4);
-        SwapEndianness(connectResponseBuffer, 4, 4);
-        
-        
-        var connectionResponse = FromBytes<ConnectResponse>(connectResponseBuffer);
-        
-        if(connectionResponse.TransactionId != connectionRequest.TransactionId) throw new Exception("Transaction ids dont match!");
-
-        var announceRequest = new AnnounceRequest(
-            connectionResponse.ConnectionId, 
-            connectionResponse.TransactionId,
-            meta.Info.Chunks[0].Hash,
-            Id,
-            Random.Shared.Next(),
-            6881 // https://www.speedguide.net/port.php?port=6881 bittorrent
+        var connectionResponseParser = new MessageParser(connectResponseBuffer);
+        var connectionResponseV2 = new ConnectResponse(
+            connectionResponseParser.ReadInt32(),
+            connectionResponseParser.ReadInt32(),
+            connectionResponseParser.ReadInt64()
         );
 
-        var announceRequestBuffer = ToBytes(announceRequest);
+
+        // var connectionResponse = FromBytes<ConnectResponse>(connectResponseBuffer);
         
-        // swap to BE
-        SwapEndianness(announceRequestBuffer, 0, 8); 
-        SwapEndianness(announceRequestBuffer, 8, 4);
-        SwapEndianness(announceRequestBuffer, 12, 4);
-        SwapEndianness(announceRequestBuffer, 56, 8);
-        SwapEndianness(announceRequestBuffer, 64, 8);
-        SwapEndianness(announceRequestBuffer, 72, 8);
-        SwapEndianness(announceRequestBuffer, 80, 4);
-        SwapEndianness(announceRequestBuffer, 84, 4);
-        SwapEndianness(announceRequestBuffer, 88, 4);
-        SwapEndianness(announceRequestBuffer, 92, 4);
-        SwapEndianness(announceRequestBuffer, 96, 2);
-        
+        if(connectionResponseV2.TransactionId != connectionRequest.TransactionId) throw new Exception("Transaction ids dont match!");
+
+        // https://www.speedguide.net/port.php?port=6881 bittorrent
+        var announceRequest = new AnnounceRequest(
+            connectionResponseV2.ConnectionId, 
+            Random.Shared.Next(),
+            meta.Info.Chunks[0].Hash,
+            Id,
+            meta.Info.Length,
+            Random.Shared.Next() 
+        );
+
+        var announceRequestBuffer = new MessageBuilder(98)
+            .Write(announceRequest.ConnectionId)
+            .Write(announceRequest.Action)
+            .Write(announceRequest.TransactionId)
+            .Write(infoHash)
+            .Write(announceRequest.PeerId)
+            .Write(announceRequest.Downloaded)
+            .Write(announceRequest.Left)
+            .Write(announceRequest.Uploaded)
+            .Write(announceRequest.Event)
+            .Write(announceRequest.IpAddress)
+            .Write(announceRequest.Key)
+            .Write(announceRequest.NumWant)
+            .Write(announceRequest.Port)
+            .AsBuffer();
+
         sock.Send(announceRequestBuffer);
 
-        var bufferSize = sock.ReceiveBufferSize;
-        // var announceResponseBuffer = sock.Receive();
+        var announceResponseBuffer = new byte[2048];
+        // var bufferSize = sock.ReceiveBufferSize;
+        var received = sock.Receive(announceResponseBuffer) - 1;
+
+        var announceParser = new MessageParser(announceResponseBuffer[..received]);
+        var announceAction = announceParser.ReadInt32();
+        var announceTransacitionId = announceParser.ReadInt32();
+        
+        if(announceTransacitionId != announceRequest.TransactionId) throw new Exception("Transaction ids dont match!");
+
+        
+        // error
+        // TODO: Find out reason behind `connection id missmatch.`; try running reference implementation?
+        if (announceAction == 3)
+        {
+            var announceError = announceParser.ReadString(received - 8);
+        }
+        
+        
+        var announceInterval = announceParser.ReadInt32();
+        var announceLeechers = announceParser.ReadInt32();
+        var announceSeeders = announceParser.ReadInt32();
+        var announceIp = announceParser.ReadInt32();
+        var announcePort = announceParser.ReadInt16();
+    }
+
+    // interface IField<TValue> where
+    // {
+    //     int Size { get; }
+    //
+    //     ValueType Value { get; }
+    // }
+    //
+    // struct Int32Field : IField
+    // {
+    //     public Int32Field(int value)
+    //     {
+    //         Value = value;
+    //     }
+    //     
+    //     public int Size => 4;
+    //     public ValueType Value { get; }
+    // }
+    
+    public class MessageParser
+    {
+        private readonly byte[] _message;
+        private int _currentIndex = 0;
+
+        public int CurrentIndex => _currentIndex;
+        public int Size => _message.Length;
+        
+        public MessageParser(byte[] message)
+        {
+            _message = message;
+        }
+
+        public short ReadInt16()
+        {
+            var value = BinaryPrimitives.ReadInt16BigEndian(_message.AsSpan(_currentIndex, 2));
+            _currentIndex += 2;
+            return value;
+        }
+        
+        public int ReadInt32()
+        {
+            var value = BinaryPrimitives.ReadInt32BigEndian(_message.AsSpan(_currentIndex, 4));
+            _currentIndex += 4;
+            return value;
+        }
+
+        public long ReadInt64()
+        {
+            var value = BinaryPrimitives.ReadInt32BigEndian(_message.AsSpan(_currentIndex, 8));
+            _currentIndex += 8;
+            return value;
+        }
+        
+        public string ReadString(int length)
+        {
+            var value = Encoding.UTF8.GetString(_message, _currentIndex, length);
+            _currentIndex += length;
+            return value;
+        }
+    }
+
+    public class MessageBuilder
+    {
+        private readonly byte[] _message;
+        private int _currentIndex = 0;
+        
+        public MessageBuilder(int size)
+        {
+            _message = new byte[size];
+        }
+
+        public byte[] AsBuffer() => _message;
+
+        public MessageBuilder Write(short value)
+        {
+            if(value != 0) BinaryPrimitives.WriteInt16BigEndian(_message.AsSpan(_currentIndex, 2), value);
+            _currentIndex += 2;
+            return this;
+        }
+        
+        public MessageBuilder Write(int value)
+        {
+            //https://stackoverflow.com/a/61124696
+            if(value != 0) BinaryPrimitives.WriteInt32BigEndian(_message.AsSpan(_currentIndex, 4), value);
+            _currentIndex += 4;
+            return this;
+        }
+
+        public MessageBuilder Write(long value)
+        {
+            if(value != 0) BinaryPrimitives.WriteInt64BigEndian(_message.AsSpan(_currentIndex, 8), value);
+            _currentIndex += 8;
+            return this;
+        }
+
+        public MessageBuilder Write(byte[] value)
+        {
+            for (var i = 0; i < value.Length; i++)
+            {
+                _message[_currentIndex + i] = value[i];
+            }
+
+            _currentIndex += value.Length;
+            return this;
+        }
+
+        public MessageBuilder Write(string value)
+        {
+            // var bString = new BString()
+            // value = BEncodingSerializer.Serialize(new BString(value));
+            var bytes = Encoding.ASCII.GetBytes(value);
+            
+            for (var i = 0; i < bytes.Length; i++)
+            {
+                _message[_currentIndex + i] = bytes[i];
+            }
+
+            _currentIndex += bytes.Length;
+            return this;
+        }
     }
 
     private static byte[] ToBytes<T>(T structure) where T : struct
@@ -297,16 +449,23 @@ public class Program
         public readonly int TransactionId = 0;
     }
 
-    [StructLayout(LayoutKind.Explicit, Pack = 0, Size = 16)]
+    // [StructLayout(LayoutKind.Explicit, Pack = 0, Size = 16)]
     public struct ConnectResponse
     {
-        [FieldOffset(0)]
+        public ConnectResponse(int action, int transactionId, long connectionId)
+        {
+            Action = action;
+            TransactionId = transactionId;
+            ConnectionId = connectionId;
+        }
+        
+        // [FieldOffset(0)]
         public readonly int Action;
 
-        [FieldOffset(4)]
+        // [FieldOffset(4)]
         public readonly int TransactionId;
         
-        [FieldOffset(8)]
+        // [FieldOffset(8)]
         public readonly long ConnectionId;
     }
 
@@ -368,7 +527,7 @@ public class Program
         }
     }
 
-    [StructLayout(LayoutKind.Explicit, Pack = 0, Size = 98)]
+    [StructLayout(LayoutKind.Sequential)]
     public struct AnnounceRequest
     {
         public AnnounceRequest(
@@ -376,63 +535,62 @@ public class Program
             int transactionId, 
             string infoHash, 
             string peerId,
-            int key,
-            short port
+            int left,
+            int key
         )
         {
             ConnectionId = connectionId;
             TransactionId = transactionId;
-            InfoHash = infoHash.ToCharArray();
-            PeerId = peerId.ToCharArray();
+            InfoHash = infoHash;
+            PeerId = peerId;
             Downloaded = 0;
-            Left = 0;
+            Left = left;
             Uploaded = 0;
             Key = key;
-            Port = port;
         }
         
-        [FieldOffset(0)]
+        // [FieldOffset(0)]
         public readonly long ConnectionId;
 
-        [FieldOffset(8)]
+        // [FieldOffset(8)]
         public readonly  int Action = 1; // announce
 
-        [FieldOffset(12)]
+        // [FieldOffset(12)]
         public readonly int TransactionId;
 
         // 20 bytes
-        [FieldOffset(16)]
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 20)]
-        public readonly char[] InfoHash;
+        // [FieldOffset(16)]
+        // [MarshalAs(UnmanagedType.ByValArray, SizeConst = 20)]
+        public readonly string InfoHash;
 
         // 20 bytes
-        [FieldOffset(36)]
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 20)]
-        public readonly char[] PeerId;
+        // [FieldOffset(36)]
+        // [MarshalAs(UnmanagedType.ByValArray, SizeConst = 20)]
+        public readonly string PeerId;
 
-        [FieldOffset(56)]
+        // [FieldOffset(56)]
         public readonly long Downloaded;
 
-        [FieldOffset(64)]
+        // [FieldOffset(64)]
         public readonly long Left;
 
-        [FieldOffset(72)]
+        // [FieldOffset(72)]
         public readonly long Uploaded;
 
-        [FieldOffset(80)]
+        // [FieldOffset(80)]
         public readonly int Event = 0; // 0: none; 1: completed; 2: started; 3: stopped
 
-        [FieldOffset(84)]
+        // [FieldOffset(84)]
         public readonly int IpAddress = 0;
 
-        [FieldOffset(88)]
+        // [FieldOffset(88)]
         public readonly int Key;
 
-        [FieldOffset(92)]
+        // [FieldOffset(92)]
         public readonly int NumWant = -1;
 
-        [FieldOffset(96)]
-        public readonly short Port;
+        // [FieldOffset(96)]
+        public readonly short Port = 6881;
     }
     
     [StructLayout(LayoutKind.Explicit, Pack = 0)]
