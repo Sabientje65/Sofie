@@ -12,18 +12,14 @@ public class Program
     private const string FilePath = @"D:\Users\danny\Downloads\[HorribleSubs] Toaru Kagaku no Railgun T - 01 [1080p].mkv.torrent";
 
     private const string Id = "qB-awfiaur27v367ab21";
-    
+
     public static async Task Main()
     {
         // implementation guide for reference:
         // https://allenkim67.github.io/programming/2016/05/04/how-to-make-your-own-bittorrent-client.html
-        
-        // using var reader = new BEncodingDeserializer(File.OpenRead(FilePath));
-        var n = typeof(FixedSizeNonTerminatedStringMarshaller).FullName;
 
-        var v2 = new PackagedString(Id);
-        var packedBytes = ToBytes(v2);
-        var unpackedBytes = FromBytes<PackagedString>(packedBytes);
+        // using var reader = new BEncodingDeserializer(File.OpenRead(FilePath));
+        // var n = typeof(FixedSizeNonTerminatedStringMarshaller).FullName;
         
         // var announceRequest = new AnnounceRequest(
         //     1, 
@@ -33,7 +29,9 @@ public class Program
         //     Random.Shared.Next(),
         //     6881 // https://www.speedguide.net/port.php?port=6881 bittorrent
         // );
-        //
+
+        // var announceBytes = ToBytes(announceRequest);
+        
         //Torrent meta is always a dictionary
         var metaDictionary = BEncodingSerializer.Deserialize(File.OpenRead(FilePath)) as BDictionary;
 
@@ -311,29 +309,7 @@ public class Program
         [FieldOffset(8)]
         public readonly long ConnectionId;
     }
-    
-    [DebuggerDisplay("{GetValue()}")]
-    [StructLayout(LayoutKind.Explicit, Pack = 0, Size = 20)]
-    public struct PackagedString
-    {
-        [MarshalAs(
-            UnmanagedType.CustomMarshaler, 
-            MarshalType = "Playground.Program+FixedSizeNonTerminatedStringMarshaller", 
-            MarshalCookie = "20", 
-            SizeConst = 20, 
-            MarshalTypeRef = typeof(FixedSizeNonTerminatedStringMarshaller))
-        ]
-        [FieldOffset(0)]
-        private char[] _value;
 
-        public string GetValue() => new string(_value);
-        
-        public PackagedString(string value)
-        {
-            _value = value.ToCharArray();
-        }
-    }
-    
     public class FixedSizeNonTerminatedStringMarshaller : ICustomMarshaler
     {
         private int _size;
@@ -406,8 +382,8 @@ public class Program
         {
             ConnectionId = connectionId;
             TransactionId = transactionId;
-            InfoHash = infoHash;
-            PeerId = peerId;
+            InfoHash = infoHash.ToCharArray();
+            PeerId = peerId.ToCharArray();
             Downloaded = 0;
             Left = 0;
             Uploaded = 0;
@@ -426,12 +402,13 @@ public class Program
 
         // 20 bytes
         [FieldOffset(16)]
-        // [MarshalAs()]
-        public readonly string InfoHash;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 20)]
+        public readonly char[] InfoHash;
 
         // 20 bytes
         [FieldOffset(36)]
-        public readonly string PeerId;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 20)]
+        public readonly char[] PeerId;
 
         [FieldOffset(56)]
         public readonly long Downloaded;
